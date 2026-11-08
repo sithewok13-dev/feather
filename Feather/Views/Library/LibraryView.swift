@@ -26,6 +26,7 @@ struct LibraryView: View {
 	// MARK: Selection State
 	@State private var _selectedAppUUIDs: Set<String> = []
 	@State private var _editMode: EditMode = .inactive
+	@State private var _isBulkDeleteConfirmPresenting = false
 	
 	@State private var _searchText = ""
 	@State private var _selectedScope: Scope = .all
@@ -147,12 +148,22 @@ struct LibraryView: View {
 				}
 				
 				if _editMode.isEditing {
+					ToolbarItem(placement: .topBarLeading) {
+						Button {
+							_toggleSelectAll()
+						} label: {
+							Image(systemName: _areAllVisibleAppsSelected ? "checkmark.circle.fill" : "circle.dashed")
+						}
+						.disabled(_getAllApps().isEmpty)
+						.accessibilityLabel(_areAllVisibleAppsSelected ? "Deselect All" : "Select All")
+					}
+					
 					NBToolbarButton(
 						.localized("Delete"),
 						systemImage: "trash",
 						isDisabled: _selectedAppUUIDs.isEmpty
 					) {
-						_bulkDeleteSelectedApps()
+						_isBulkDeleteConfirmPresenting = true
 					}
 				} else {
 					ToolbarItem(placement: .topBarTrailing) {
@@ -184,6 +195,17 @@ struct LibraryView: View {
 				}
 			}
 			.environment(\.editMode, $_editMode)
+			.alert(
+				"Delete \(_selectedAppUUIDs.count) app(s)?",
+				isPresented: $_isBulkDeleteConfirmPresenting
+			) {
+				Button(.localized("Cancel"), role: .cancel) {}
+				Button(.localized("Delete"), role: .destructive) {
+					_bulkDeleteSelectedApps()
+				}
+			} message: {
+				Text("This removes the selected signed and imported apps from Feather. It cannot be undone.")
+			}
 			.sheet(item: $_selectedInfoAppPresenting) { app in
 				LibraryInfoView(app: app.base)
 			}
@@ -269,6 +291,25 @@ extension LibraryView {
 		_selectedAppUUIDs.removeAll()
 		
 		// _editMode = .inactive
+	}
+	
+	private var _visibleAppUUIDs: Set<String> {
+		Set(_getAllApps().compactMap { $0.uuid })
+	}
+	
+	private var _areAllVisibleAppsSelected: Bool {
+		let visible = _visibleAppUUIDs
+		return !visible.isEmpty && visible.isSubset(of: _selectedAppUUIDs)
+	}
+	
+	/// Selects every app currently shown (Signed + Imported, respecting search and scope),
+	/// or clears the selection if everything is already selected.
+	private func _toggleSelectAll() {
+		if _areAllVisibleAppsSelected {
+			_selectedAppUUIDs.removeAll()
+		} else {
+			_selectedAppUUIDs = _visibleAppUUIDs
+		}
 	}
 	
 	private func _getAllApps() -> [AppInfoPresentable] {
