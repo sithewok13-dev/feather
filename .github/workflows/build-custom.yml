@@ -18,10 +18,21 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.3.0.app
 
+      - name: Resolve Swift packages
+        run: |
+          # Xcode sometimes crashes during package resolution; retry a few times.
+          for i in 1 2 3; do
+            xcodebuild -resolvePackageDependencies -project Feather.xcodeproj -scheme Feather \
+              -derivedDataPath "$TMPDIR/Feather/iphoneos" -skipPackagePluginValidation && exit 0
+            echo "Package resolution failed (attempt $i), retrying..."
+            sleep 10
+          done
+          exit 1
+
       - name: Build unsigned IPA
         run: |
           agvtool new-version -all $(git rev-parse HEAD)
-          make iphoneos
+          make iphoneos || make iphoneos
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
