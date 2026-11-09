@@ -27,6 +27,8 @@ struct LibraryView: View {
 	@State private var _selectedAppUUIDs: Set<String> = []
 	@State private var _editMode: EditMode = .inactive
 	@State private var _isBulkDeleteConfirmPresenting = false
+	@State private var _bulkSignStatus: String?
+	@State private var _bulkInstallQueue: [AnyApp] = []
 	
 	@State private var _searchText = ""
 	@State private var _selectedScope: Scope = .all
@@ -62,6 +64,12 @@ struct LibraryView: View {
 		sortDescriptors: [NSSortDescriptor(keyPath: \Imported.date, ascending: false)],
 		animation: .snappy
 	) private var _importedApps: FetchedResults<Imported>
+	
+	@FetchRequest(
+		entity: CertificatePair.entity(),
+		sortDescriptors: [NSSortDescriptor(keyPath: \CertificatePair.date, ascending: false)],
+		animation: .snappy
+	) private var _certificates: FetchedResults<CertificatePair>
 	
 	@FetchRequest(
 		entity: AltSource.entity(),
@@ -158,6 +166,23 @@ struct LibraryView: View {
 						.accessibilityLabel(_areAllVisibleAppsSelected ? "Deselect All" : "Select All")
 					}
 					
+					ToolbarItem(placement: .topBarTrailing) {
+						Menu {
+							Button("Sign Selected (\(_selectedImportedApps.count))", systemImage: "signature") {
+								_bulkSignSelected()
+							}
+							.disabled(_selectedImportedApps.isEmpty)
+							
+							Button("Install Selected (\(_selectedSignedApps.count))", systemImage: "square.and.arrow.down") {
+								_bulkInstallSelected()
+							}
+							.disabled(_selectedSignedApps.isEmpty)
+						} label: {
+							Image(systemName: "ellipsis.circle")
+						}
+						.disabled(_selectedAppUUIDs.isEmpty || _bulkSignStatus != nil)
+					}
+					
 					NBToolbarButton(
 						.localized("Delete"),
 						systemImage: "trash",
@@ -209,7 +234,19 @@ struct LibraryView: View {
 			.sheet(item: $_selectedInfoAppPresenting) { app in
 				LibraryInfoView(app: app.base)
 			}
-			.sheet(item: $_selectedInstallAppPresenting) { app in
+			.overlay(alignment: .bottom) {
+				if let status = _bulkSignStatus {
+					HStack(spacing: 8) {
+						ProgressView()
+						Text(status)
+					}
+					.padding(.horizontal, 16)
+					.padding(.vertical, 10)
+					.background(.regularMaterial, in: Capsule())
+					.padding(.bottom, 100)
+				}
+			}
+			.sheet(item: $_selectedInstallAppPresenting, onDismiss: _presentNextQueuedInstall) { app in
 				InstallPreviewView(app: app.base, isSharing: app.archive)
 					.presentationDetents([.height(200)])
 					.presentationDragIndicator(.visible)
@@ -291,6 +328,107 @@ extension LibraryView {
 		_selectedAppUUIDs.removeAll()
 		
 		// _editMode = .inactive
+	}
+	
+	private var _selectedImportedApps: [Imported] {
+		_filteredImportedApps.filter { _selectedAppUUIDs.contains($0.uuid ?? "") }
+	}
+	
+	private var _selectedSignedApps: [Signed] {
+		_filteredSignedApps.filter { _selectedAppUUIDs.contains($0.uuid ?? "") }
+	}
+	
+	// MARK: Bulk Sign
+	/// Signs every selected imported app, one after another, with the default
+	/// certificate and the default signing options (same as tapping Sign without changes).
+	private func _bulkSignSelected() {
+		let apps = _selectedImportedApps
+		guard !apps.isEmpty else { return }
+		
+		let storedCert = UserDefaults.standard.integer(forKey: "feather.selectedCert")
+		let cert: CertificatePair? = _certificates.indices.contains(storedCert) ? _certificates[storedCert] : nil
+		
+		guard cert != nil || OptionsManager.shared.options.signingOption != .default else {
+			UIAlertController.showAlertWithOk(
+				title: .localized("No Certificate"),
+				message: .localized("Please go to settings and import a valid certificate")
+			)
+			return
+		}
+		
+		_editMode = .inactive
+		_signNext(apps, index: 0, cert: cert, failures: [])
+	}
+	
+	private func _signNext(_ apps: [Imported], index: Int, cert: CertificatePair?, failures: [String]) {
+		guard index < apps.count else {
+			_bulkSignStatus = nil
+			let signed = apps.count - failures.count
+			var message = "Signed \(signed) of \(apps.count) app(s). They are now under Signed."
+			if !failures.isEmpty {
+				message += "\n\nFailed:\n" + failures.joined(separator: "\n")
+			}
+			UIAlertController.showAlertWithOk(title: "Sign Selected", message: message)
+			return
+		}
+		
+		let app = apps[index]
+		_bulkSignStatus = "Signing \(index + 1) of \(apps.count)…"
+		
+		// Same per-app adjustments SigningView applies when it opens.
+		var options = OptionsManager.shared.options
+		if
+			options.ppqProtection,
+			let identifier = app.identifier,
+			let cert,
+			cert.ppQCheck
+		{
+			options.appIdentifier = "\(identifier).\(options.ppqString)"
+		}
+		if
+			let currentBundleId = app.identifier,
+			let newBundleId = options.identifiers[currentBundleId]
+		{
+			options.appIdentifier = newBundleId
+		}
+		if
+			let currentName = app.name,
+			let newName = options.displayNames[currentName]
+		{
+			options.appName = newName
+		}
+		
+		FR.signPackageFile(app, using: options, icon: nil, certificate: cert) { error in
+			var failures = failures
+			if let error {
+				failures.append("\(app.name ?? "Unknown"): \(error.localizedDescription)")
+			} else if options.post_deleteAppAfterSigned {
+				Storage.shared.deleteApp(for: app)
+			}
+			_signNext(apps, index: index + 1, cert: cert, failures: failures)
+		}
+	}
+	
+	// MARK: Bulk Install
+	/// Queues every selected signed app. Each one opens the normal install sheet;
+	/// closing the sheet starts the next app in the queue. Feather itself is skipped.
+	private func _bulkInstallSelected() {
+		let ownId = Bundle.main.bundleIdentifier
+		let apps = _selectedSignedApps.filter { $0.identifier != ownId }
+		guard !apps.isEmpty else { return }
+		
+		_bulkInstallQueue = apps.map { AnyApp(base: $0) }
+		_editMode = .inactive
+		_presentNextQueuedInstall()
+	}
+	
+	private func _presentNextQueuedInstall() {
+		guard !_bulkInstallQueue.isEmpty else { return }
+		let next = _bulkInstallQueue.removeFirst()
+		// Give the previous sheet time to finish dismissing.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+			_selectedInstallAppPresenting = next
+		}
 	}
 	
 	private var _visibleAppUUIDs: Set<String> {
