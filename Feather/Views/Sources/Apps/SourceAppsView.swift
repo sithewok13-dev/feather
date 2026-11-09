@@ -51,6 +51,9 @@ struct SourceAppsView: View {
 	@ObservedObject var viewModel: SourcesViewModel
 	@State private var _sourceContexts: [SourceRepositoryContext]?
 	@State private var _isDownloadAllPresenting = false
+	@ObservedObject private var _pipeline = BulkPipeline.shared
+	@State private var _pipelineViewID = UUID()
+	@State private var _installPresenting: AnyApp?
 	
 	/// Every app in the loaded source(s) that has a download link.
 	private var _downloadableApps: [(context: SourceRepositoryContext, app: ASRepository.App, url: URL)] {
@@ -127,7 +130,7 @@ struct SourceAppsView: View {
 				} label: {
 					Image(systemName: "arrow.down.circle")
 				}
-				.disabled(_downloadableApps.isEmpty)
+				.disabled(_downloadableApps.isEmpty || _pipeline.isRunning)
 				.accessibilityLabel("Download All")
 			}
 			
@@ -139,16 +142,42 @@ struct SourceAppsView: View {
 				_sortActions()
 			}
 		}
-		.alert(
-			"Download all \(_downloadableApps.count) apps?",
-			isPresented: $_isDownloadAllPresenting
+		.confirmationDialog(
+			"All \(_downloadableApps.count) apps in this list",
+			isPresented: $_isDownloadAllPresenting,
+			titleVisibility: .visible
 		) {
-			Button(.localized("Cancel"), role: .cancel) {}
 			Button("Download All") {
 				_downloadAll()
 			}
+			Button("Download, Sign & Install All") {
+				_downloadSignInstallAll()
+			}
+			Button(.localized("Cancel"), role: .cancel) {}
 		} message: {
-			Text("Each app downloads the same way as tapping Get, and appears under Imported in your Library when done.")
+			Text("Sign & Install uses your default certificate and signing settings. iOS asks you to approve each install.")
+		}
+		.overlay(alignment: .bottom) {
+			if let status = _pipeline.status, _pipeline.ownerID == _pipelineViewID {
+				HStack(spacing: 8) {
+					ProgressView()
+					Text(status)
+				}
+				.padding(.horizontal, 16)
+				.padding(.vertical, 10)
+				.background(.regularMaterial, in: Capsule())
+				.padding(.bottom, 100)
+			}
+		}
+		.onChange(of: _pipeline.installQueue.count) { count in
+			if count > 0, _installPresenting == nil, _pipeline.ownerID == _pipelineViewID {
+				_installPresenting = _pipeline.popNextInstall()
+			}
+		}
+		.sheet(item: $_installPresenting, onDismiss: _presentNextInstall) { app in
+			InstallPreviewView(app: app.base, isSharing: false)
+				.presentationDetents([.height(200)])
+				.presentationDragIndicator(.visible)
 		}
 		.onAppear {
 			if !hasLoadedOnce, viewModel.isFinished {
@@ -169,6 +198,28 @@ struct SourceAppsView: View {
 				source: route.source,
 				app: route.app
 			)
+		}
+	}
+	
+	private func _downloadSignInstallAll() {
+		let items = _downloadableApps.map { item in
+			BulkPipeline.Item(
+				id: item.app.currentUniqueId,
+				url: item.url,
+				provenance: SourceAppProvenance(
+					sourceURL: item.context.sourceURL,
+					repository: item.context.repository,
+					app: item.app
+				)
+			)
+		}
+		_pipeline.downloadSignInstall(items, owner: _pipelineViewID)
+	}
+	
+	private func _presentNextInstall() {
+		guard _pipeline.ownerID == _pipelineViewID else { return }
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+			_installPresenting = _pipeline.popNextInstall()
 		}
 	}
 	
