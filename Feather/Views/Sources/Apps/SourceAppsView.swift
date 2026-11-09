@@ -50,6 +50,17 @@ struct SourceAppsView: View {
 	var object: [AltSource]
 	@ObservedObject var viewModel: SourcesViewModel
 	@State private var _sourceContexts: [SourceRepositoryContext]?
+	@State private var _isDownloadAllPresenting = false
+	
+	/// Every app in the loaded source(s) that has a download link.
+	private var _downloadableApps: [(context: SourceRepositoryContext, app: ASRepository.App, url: URL)] {
+		(_sourceContexts ?? []).flatMap { context in
+			context.repository.apps.compactMap { app in
+				guard let url = app.currentDownloadUrl else { return nil }
+				return (context: context, app: app, url: url)
+			}
+		}
+	}
 	
 	// MARK: Body
 	var body: some View {
@@ -110,6 +121,16 @@ struct SourceAppsView: View {
 			}
 		}
 		.toolbar {
+			ToolbarItem(placement: .topBarTrailing) {
+				Button {
+					_isDownloadAllPresenting = true
+				} label: {
+					Image(systemName: "arrow.down.circle")
+				}
+				.disabled(_downloadableApps.isEmpty)
+				.accessibilityLabel("Download All")
+			}
+			
 			NBToolbarMenu(
 				systemImage: "line.3.horizontal.decrease",
 				style: .icon,
@@ -117,6 +138,17 @@ struct SourceAppsView: View {
 			) {
 				_sortActions()
 			}
+		}
+		.alert(
+			"Download all \(_downloadableApps.count) apps?",
+			isPresented: $_isDownloadAllPresenting
+		) {
+			Button(.localized("Cancel"), role: .cancel) {}
+			Button("Download All") {
+				_downloadAll()
+			}
+		} message: {
+			Text("Each app downloads the same way as tapping Get, and appears under Imported in your Library when done.")
 		}
 		.onAppear {
 			if !hasLoadedOnce, viewModel.isFinished {
@@ -136,6 +168,20 @@ struct SourceAppsView: View {
 				sourceURL: route.sourceURL,
 				source: route.source,
 				app: route.app
+			)
+		}
+	}
+	
+	private func _downloadAll() {
+		for item in _downloadableApps {
+			_ = DownloadManager.shared.startDownload(
+				from: item.url,
+				id: item.app.currentUniqueId,
+				sourceProvenance: SourceAppProvenance(
+					sourceURL: item.context.sourceURL,
+					repository: item.context.repository,
+					app: item.app
+				)
 			)
 		}
 	}
