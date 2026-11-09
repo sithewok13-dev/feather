@@ -168,6 +168,11 @@ struct LibraryView: View {
 					
 					ToolbarItem(placement: .topBarTrailing) {
 						Menu {
+							Button("Sign & Install Selected (\(_selectedImportedApps.count))", systemImage: "bolt.fill") {
+								_bulkSignSelected(thenInstall: true)
+							}
+							.disabled(_selectedImportedApps.isEmpty)
+							
 							Button("Sign Selected (\(_selectedImportedApps.count))", systemImage: "signature") {
 								_bulkSignSelected()
 							}
@@ -341,7 +346,7 @@ extension LibraryView {
 	// MARK: Bulk Sign
 	/// Signs every selected imported app, one after another, with the default
 	/// certificate and the default signing options (same as tapping Sign without changes).
-	private func _bulkSignSelected() {
+	private func _bulkSignSelected(thenInstall: Bool = false) {
 		let apps = _selectedImportedApps
 		guard !apps.isEmpty else { return }
 		
@@ -356,12 +361,43 @@ extension LibraryView {
 			return
 		}
 		
+		let signedBefore = Set(_signedApps.compactMap { $0.uuid })
 		_editMode = .inactive
-		_signNext(apps, index: 0, cert: cert, failures: [])
+		_signNext(apps, index: 0, cert: cert, failures: [], installAfter: thenInstall ? signedBefore : nil)
 	}
 	
-	private func _signNext(_ apps: [Imported], index: Int, cert: CertificatePair?, failures: [String]) {
+	/// `installAfter`: Signed UUIDs that existed before signing started. When set, the newly
+	/// signed apps are queued for install once all signing is done.
+	private func _signNext(
+		_ apps: [Imported],
+		index: Int,
+		cert: CertificatePair?,
+		failures: [String],
+		installAfter signedBefore: Set<String>? = nil
+	) {
 		guard index < apps.count else {
+			if let signedBefore {
+				_bulkSignStatus = "Preparing installs…"
+				// Let Core Data publish the new Signed entries first.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+					_bulkSignStatus = nil
+					let ownId = Bundle.main.bundleIdentifier
+					let newApps = _signedApps.filter {
+						guard let uuid = $0.uuid else { return false }
+						return !signedBefore.contains(uuid) && $0.identifier != ownId
+					}
+					if !failures.isEmpty {
+						UIAlertController.showAlertWithOk(
+							title: "Sign & Install",
+							message: "Some apps failed to sign and will be skipped:\n" + failures.joined(separator: "\n")
+						)
+					}
+					guard !newApps.isEmpty else { return }
+					_bulkInstallQueue = newApps.map { AnyApp(base: $0) }
+					_presentNextQueuedInstall()
+				}
+				return
+			}
 			_bulkSignStatus = nil
 			let signed = apps.count - failures.count
 			var message = "Signed \(signed) of \(apps.count) app(s). They are now under Signed."
@@ -405,7 +441,7 @@ extension LibraryView {
 			} else if options.post_deleteAppAfterSigned {
 				Storage.shared.deleteApp(for: app)
 			}
-			_signNext(apps, index: index + 1, cert: cert, failures: failures)
+			_signNext(apps, index: index + 1, cert: cert, failures: failures, installAfter: signedBefore)
 		}
 	}
 	
