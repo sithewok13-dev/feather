@@ -8,6 +8,9 @@ on:
       - "dist/**"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-latest
@@ -42,3 +45,16 @@ jobs:
           name: Feather-select-all
           path: packages/Feather.ipa
           if-no-files-found: error
+
+      - name: Publish to ios-latest release (feeds Sithewok's Builds source)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="Build ${{ github.run_number }} · $(date -u +%Y-%m-%d)"
+          if gh release view ios-latest >/dev/null 2>&1; then
+            gh release upload ios-latest packages/Feather.ipa --clobber
+            gh release edit ios-latest --notes "$NOTES" --title "Feather (custom) – latest"
+          else
+            gh release create ios-latest packages/Feather.ipa \
+              --target "${{ github.sha }}" --title "Feather (custom) – latest" --notes "$NOTES" --prerelease
+          fi
