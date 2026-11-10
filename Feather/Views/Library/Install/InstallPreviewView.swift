@@ -207,6 +207,18 @@ struct InstallPreviewView: View {
 	) -> Task<Void, Never> {
 
 		Task.detached(priority: .background) {
+			// Custom build: updating Feather itself. The status only becomes .installing
+			// after the whole package has been sent to iOS, and iOS will not replace a
+			// running app, so close Feather now and let iOS finish.
+			if bundleID == Bundle.main.bundleIdentifier {
+				Logger.misc.info("Self-update: package sent, closing Feather so iOS can finish")
+				try? await Task.sleep(nanoseconds: 1_500_000_000)
+				await MainActor.run {
+					UIApplication.shared.suspend()
+				}
+				return
+			}
+			
 			var hasStarted = false
 
 			while !Task.isCancelled {
@@ -216,16 +228,6 @@ struct InstallPreviewView: View {
 					hasStarted = true
 				}
 				
-				// Custom build: updating Feather itself. Past 0.6 the download is done and
-				// iOS is installing; step out of the way so it can replace this app.
-				if bundleID == Bundle.main.bundleIdentifier, rawProgress >= 0.6 {
-					Logger.misc.info("Self-update: package downloaded, closing Feather so iOS can finish")
-					try? await Task.sleep(nanoseconds: 1_000_000_000)
-					await MainActor.run {
-						UIApplication.shared.suspend()
-					}
-					break
-				}
 
 				let progress = await hasStarted
 					? _normalizeInstallProgress(rawProgress)
