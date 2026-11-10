@@ -111,7 +111,9 @@ final class BulkPipeline: ObservableObject {
 			let ownId = Bundle.main.bundleIdentifier
 			let newSigned = self._fetch("Signed")
 				.compactMap { $0 as? Signed }
-				.filter { !signedBefore.contains($0.uuid ?? "") && $0.identifier != ownId }
+				.filter { !signedBefore.contains($0.uuid ?? "") }
+				// Feather itself goes last: installing it closes the app.
+				.sorted { ($0.identifier == ownId ? 1 : 0) < ($1.identifier == ownId ? 1 : 0) }
 			
 			self.status = nil
 			
