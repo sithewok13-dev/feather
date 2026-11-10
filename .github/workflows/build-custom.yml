@@ -39,6 +39,19 @@ jobs:
           agvtool new-version -all $(git rev-parse HEAD)
           make iphoneos || make iphoneos
 
+      - name: Make Feather Updater variant (separate app ID so it can install Feather)
+        run: |
+          rm -rf updater && mkdir updater && cd updater
+          unzip -q ../packages/Feather.ipa
+          P=Payload/Feather.app/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier thewonderofyou.Feather.updater" "$P"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Feather Updater" "$P" || \
+            /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Feather Updater" "$P"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleURLTypes:0:CFBundleURLSchemes:0 featherupdater" "$P" || true
+          codesign --force --sign - --timestamp=none Payload/Feather.app
+          ditto -c -k --sequesterRsrc --keepParent Payload ../packages/FeatherUpdater.ipa
+          cd .. && ls -la packages
+
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
@@ -52,9 +65,9 @@ jobs:
         run: |
           NOTES="Build ${{ github.run_number }} · $(date -u +%Y-%m-%d)"
           if gh release view ios-latest >/dev/null 2>&1; then
-            gh release upload ios-latest packages/Feather.ipa --clobber
+            gh release upload ios-latest packages/Feather.ipa packages/FeatherUpdater.ipa --clobber
             gh release edit ios-latest --notes "$NOTES" --title "Feather (custom) – latest"
           else
-            gh release create ios-latest packages/Feather.ipa \
+            gh release create ios-latest packages/Feather.ipa packages/FeatherUpdater.ipa \
               --target "${{ github.sha }}" --title "Feather (custom) – latest" --notes "$NOTES" --prerelease
           fi

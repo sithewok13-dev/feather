@@ -386,8 +386,7 @@ extension LibraryView {
 						guard let uuid = $0.uuid else { return false }
 						return !signedBefore.contains(uuid)
 					}
-					// Feather itself goes last: installing it closes the app.
-					.sorted { ($0.identifier == ownId ? 1 : 0) < ($1.identifier == ownId ? 1 : 0) }
+					.filter { $0.identifier != ownId }
 					if !failures.isEmpty {
 						UIAlertController.showAlertWithOk(
 							title: "Sign & Install",
@@ -449,11 +448,10 @@ extension LibraryView {
 	
 	// MARK: Bulk Install
 	/// Queues every selected signed app. Each one opens the normal install sheet;
-	/// closing the sheet starts the next app in the queue. Feather itself goes last.
+	/// closing the sheet starts the next app in the queue. Feather itself is skipped (use Feather Updater).
 	private func _bulkInstallSelected() {
 		let ownId = Bundle.main.bundleIdentifier
-		let apps = _selectedSignedApps
-			.sorted { ($0.identifier == ownId ? 1 : 0) < ($1.identifier == ownId ? 1 : 0) }
+		let apps = _selectedSignedApps.filter { $0.identifier != ownId }
 		guard !apps.isEmpty else { return }
 		
 		_bulkInstallQueue = apps.map { AnyApp(base: $0) }

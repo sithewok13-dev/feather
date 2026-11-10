@@ -112,8 +112,8 @@ final class BulkPipeline: ObservableObject {
 			let newSigned = self._fetch("Signed")
 				.compactMap { $0 as? Signed }
 				.filter { !signedBefore.contains($0.uuid ?? "") }
-				// Feather itself goes last: installing it closes the app.
-				.sorted { ($0.identifier == ownId ? 1 : 0) < ($1.identifier == ownId ? 1 : 0) }
+			let skippedSelf = newSigned.contains { $0.identifier == ownId }
+			let toInstall = newSigned.filter { $0.identifier != ownId }
 			
 			self.status = nil
 			
@@ -124,7 +124,13 @@ final class BulkPipeline: ObservableObject {
 				)
 			}
 			
-			self.installQueue = newSigned.map { AnyApp(base: $0) }
+			if skippedSelf {
+				UIAlertController.showAlertWithOk(
+					title: "Feather can't replace itself",
+					message: "It was signed and is in Library > Signed, but iOS won't let Feather install over itself. Use Feather Updater to install it."
+				)
+			}
+			self.installQueue = toInstall.map { AnyApp(base: $0) }
 		}
 	}
 	
