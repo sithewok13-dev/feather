@@ -43,6 +43,10 @@ struct AboutView: View {
 					HStack(spacing: 4) {
 						Text(.localized("Version"))
 						Text(Bundle.main.version)
+						// Custom build: show which build is installed (short commit id).
+						if let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String {
+							Text("(\(String(build.prefix(7))))")
+						}
 					}
 					.font(.footnote)
 					.foregroundStyle(.secondary)
