@@ -63,6 +63,13 @@ struct CertificatesView: View {
 		.toolbar {
 			if _bindingSelectedCert == nil {
 				NBToolbarButton(
+					systemImage: "doc.on.clipboard",
+					style: .icon,
+					placement: .topBarTrailing
+				) {
+					_pasteCertificate()
+				}
+				NBToolbarButton(
 					systemImage: "plus",
 					style: .icon,
 					placement: .topBarTrailing
@@ -133,6 +140,16 @@ extension CertificatesView {
 		.buttonStyle(.plain)
 	}
 	
+	private func _pasteCertificate() {
+		CertificateTransfer.paste { error in
+			if let error {
+				UIAlertController.showAlertWithOk(title: "Paste certificate", message: error.localizedDescription)
+			} else {
+				UIAlertController.showAlertWithOk(title: "Certificate added", message: "You can now sign and install from this Feather.")
+			}
+		}
+	}
+	
 	@ViewBuilder
 	private func _actions(for cert: CertificatePair) -> some View {
 		Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
@@ -149,6 +166,17 @@ extension CertificatesView {
 			_newNickname = cert.nickname ?? ""
 			_certToRename = cert
 			_isRenamingPresenting = true
+		}
+		Button("Copy for Feather Updater", systemImage: "doc.on.doc") {
+			do {
+				try CertificateTransfer.copy(cert)
+				UIAlertController.showAlertWithOk(
+					title: "Copied",
+					message: "Now open the other Feather, go to Settings > Certificates and tap the paste button at the top. The copy expires in 5 minutes and only stays on this iPhone."
+				)
+			} catch {
+				UIAlertController.showAlertWithOk(title: "Copy failed", message: error.localizedDescription)
+			}
 		}
 		Divider()
 		Button(.localized("Check Revokage"), systemImage: "person.text.rectangle") {
