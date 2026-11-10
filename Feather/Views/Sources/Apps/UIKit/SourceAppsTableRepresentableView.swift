@@ -19,12 +19,18 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	var onGetSignInstall: ((SourceAppsView.SourceAppRoute) -> Void)? = nil
 	/// Custom build: pull-to-refresh.
 	var onRefresh: (() async -> Void)? = nil
+	/// Custom build: multi-select mode (rows show circles, taps toggle selection).
+	var isSelecting: Bool = false
+	var selectedIDs: Set<String> = []
+	var onSelectionChange: ((Set<String>) -> Void)? = nil
 	
 	func makeUIView(context: Context) -> UITableView {
 		let tableView = UITableView(frame: .zero, style: .plain)
 		tableView.delegate = context.coordinator
 		tableView.dataSource = context.coordinator
 		tableView.register(UITableViewCell.self, forCellReuseIdentifier: "AppCell")
+		tableView.allowsSelectionDuringEditing = true
+		tableView.allowsMultipleSelectionDuringEditing = true
 		tableView.register(UITableViewHeaderFooterView.self, forHeaderFooterViewReuseIdentifier: "SectionHeader")
 		
 		if #available(iOS 17, *) {
@@ -88,6 +94,17 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		if sourcesChanged || searchChanged || sortOptionChanged || sortDirectionChanged {
 			context.coordinator.invalidateCache()
 		}
+		
+		context.coordinator.onSelectionChange = onSelectionChange
+		context.coordinator.selectedIDs = selectedIDs
+		if tableView.isEditing != isSelecting {
+			tableView.setEditing(isSelecting, animated: true)
+		}
+		if isSelecting {
+			DispatchQueue.main.async {
+				context.coordinator.syncSelection(in: tableView)
+			}
+		}
 	}
 	
 	func makeCoordinator() -> Coordinator {
@@ -113,6 +130,41 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	let onSelect: (SourceAppsView.SourceAppRoute) -> Void
 	var onGetSignInstall: ((SourceAppsView.SourceAppRoute) -> Void)?
 	var onRefresh: (() async -> Void)?
+	var onSelectionChange: ((Set<String>) -> Void)?
+	var selectedIDs: Set<String> = []
+	
+	private func _entry(at indexPath: IndexPath) -> SourceAppEntry {
+		switch sortOption {
+		case .default: _sortedApps[indexPath.row]
+		case .name: _groupedAppsByNameFirstLetter[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
+		case .date: _groupedAppsByDate[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
+		}
+	}
+	
+	/// Make the table's selected rows match `selectedIDs`.
+	func syncSelection(in tableView: UITableView) {
+		guard tableView.isEditing else { return }
+		for section in 0..<tableView.numberOfSections {
+			for row in 0..<tableView.numberOfRows(inSection: section) {
+				let indexPath = IndexPath(row: row, section: section)
+				let shouldSelect = selectedIDs.contains(_entry(at: indexPath).app.currentUniqueId)
+				let isSelected = tableView.indexPathsForSelectedRows?.contains(indexPath) ?? false
+				if shouldSelect && !isSelected {
+					tableView.selectRow(at: indexPath, animated: false, scrollPosition: .none)
+				} else if !shouldSelect && isSelected {
+					tableView.deselectRow(at: indexPath, animated: false)
+				}
+			}
+		}
+	}
+	
+	func tableView(_ tableView: UITableView, didDeselectRowAt indexPath: IndexPath) {
+		guard tableView.isEditing else { return }
+		var ids = selectedIDs
+		ids.remove(_entry(at: indexPath).app.currentUniqueId)
+		selectedIDs = ids
+		onSelectionChange?(ids)
+	}
 	
 	@objc func handleRefresh(_ sender: UIRefreshControl) {
 		guard let onRefresh else {
@@ -272,6 +324,13 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	}
 	
 	func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+		if tableView.isEditing {
+			var ids = selectedIDs
+			ids.insert(_entry(at: indexPath).app.currentUniqueId)
+			selectedIDs = ids
+			onSelectionChange?(ids)
+			return
+		}
 		if #available(iOS 17, *) {
 			tableView.deselectRow(at: indexPath, animated: true)
 			
