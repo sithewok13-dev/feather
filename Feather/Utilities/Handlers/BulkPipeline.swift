@@ -71,7 +71,7 @@ final class BulkPipeline: ObservableObject {
 				sourceProvenance: item.provenance
 			)
 		}
-		status = "Downloading \(items.count) apps…"
+		status = items.count == 1 ? "Downloading…" : "Downloading \(items.count) apps…"
 		
 		Task { @MainActor in
 			// Wait until every download has finished and been imported (or failed).

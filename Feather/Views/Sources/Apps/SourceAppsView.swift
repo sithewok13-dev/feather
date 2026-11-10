@@ -77,7 +77,10 @@ struct SourceAppsView: View {
 					searchText: $_searchText,
 					sortOption: $_sortOption,
 					sortAscending: $_sortAscending,
-					onSelect: {self._selectedRoute = $0}
+					onSelect: {self._selectedRoute = $0},
+					onGetSignInstall: { route in
+						_getSignInstall(route)
+					}
 				)
 				.ignoresSafeArea()
 			} else {
@@ -214,6 +217,27 @@ struct SourceAppsView: View {
 			)
 		}
 		_pipeline.downloadSignInstall(items, owner: _pipelineViewID)
+	}
+	
+	private func _getSignInstall(_ route: SourceAppRoute) {
+		guard let url = route.app.currentDownloadUrl else { return }
+		guard !_pipeline.isRunning else {
+			UIAlertController.showAlertWithOk(
+				title: "Get, Sign & Install",
+				message: "Another download, sign & install is still running. Try again when it finishes."
+			)
+			return
+		}
+		let item = BulkPipeline.Item(
+			id: route.app.currentUniqueId,
+			url: url,
+			provenance: SourceAppProvenance(
+				sourceURL: route.sourceURL,
+				repository: route.source,
+				app: route.app
+			)
+		)
+		_pipeline.downloadSignInstall([item], owner: _pipelineViewID)
 	}
 	
 	private func _presentNextInstall() {

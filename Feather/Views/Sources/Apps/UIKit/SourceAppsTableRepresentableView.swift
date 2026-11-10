@@ -15,6 +15,8 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	@Binding var sortOption: SourceAppsView.SortOption
 	@Binding var sortAscending: Bool
 	var onSelect: (SourceAppsView.SourceAppRoute) -> Void
+	/// Custom build: long-press "Get, Sign & Install".
+	var onGetSignInstall: ((SourceAppsView.SourceAppRoute) -> Void)? = nil
 	
 	func makeUIView(context: Context) -> UITableView {
 		let tableView = UITableView(frame: .zero, style: .plain)
@@ -58,6 +60,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	
 	func updateUIView(_ tableView: UITableView, context: Context) {
 		context.coordinator.uiTableView = tableView
+		context.coordinator.onGetSignInstall = onGetSignInstall
 		
 		let sourcesChanged = context.coordinator.sourceContexts != sourceContexts
 		let searchChanged = context.coordinator.searchText != searchText
@@ -75,13 +78,15 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	}
 	
 	func makeCoordinator() -> Coordinator {
-		Coordinator(
+		let coordinator = Coordinator(
 			sourceContexts: sourceContexts,
 			searchText: searchText,
 			sortOption: sortOption,
 			sortAscending: sortAscending,
 			onSelect: onSelect
 		)
+		coordinator.onGetSignInstall = onGetSignInstall
+		return coordinator
 	}
 }
 
@@ -92,6 +97,7 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	var sortOption: SourceAppsView.SortOption
 	var sortAscending: Bool
 	let onSelect: (SourceAppsView.SourceAppRoute) -> Void
+	var onGetSignInstall: ((SourceAppsView.SourceAppRoute) -> Void)?
 	
 	private var _groupedAppsByNameFirstLetter: [String: [SourceAppEntry]] = [:]
 	private var _groupedAppsByDate: [String: [SourceAppEntry]] = [:]
@@ -322,7 +328,18 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 				}, image: UIImage(systemName: "arrow.down"))
 			)
 			
-			return UIMenu(children: [downloadsMenu, versionsMenu])
+			var children: [UIMenuElement] = [downloadsMenu, versionsMenu]
+			if let onGetSignInstall = self.onGetSignInstall, entry.app.currentDownloadUrl != nil {
+				let route = SourceAppsView.SourceAppRoute(sourceURL: entry.sourceURL, source: entry.source, app: entry.app)
+				let getSignInstall = UIAction(
+					title: "Get, Sign & Install",
+					image: UIImage(systemName: "bolt.fill")
+				) { _ in
+					onGetSignInstall(route)
+				}
+				children.insert(getSignInstall, at: 0)
+			}
+			return UIMenu(children: children)
 		}
 	}
 	
