@@ -54,6 +54,7 @@ struct SourceAppsView: View {
 	@ObservedObject private var _pipeline = BulkPipeline.shared
 	@State private var _pipelineViewID = UUID()
 	@State private var _installPresenting: AnyApp?
+	@State private var _isPickerPresenting = false
 	
 	/// Every app in the loaded source(s) that has a download link.
 	private var _downloadableApps: [(context: SourceRepositoryContext, app: ASRepository.App, url: URL)] {
@@ -160,6 +161,9 @@ struct SourceAppsView: View {
 			Button("Download, Sign & Install All") {
 				_downloadSignInstallAll()
 			}
+			Button("Choose Apps to Get, Sign & Install…") {
+				_isPickerPresenting = true
+			}
 			Button(.localized("Cancel"), role: .cancel) {}
 		} message: {
 			Text("Sign & Install uses your default certificate and signing settings. iOS asks you to approve each install.")
@@ -179,6 +183,16 @@ struct SourceAppsView: View {
 		.onChange(of: _pipeline.installQueue.count) { count in
 			if count > 0, _installPresenting == nil, _pipeline.ownerID == _pipelineViewID {
 				_installPresenting = _pipeline.popNextInstall()
+			}
+		}
+		.sheet(isPresented: $_isPickerPresenting) {
+			SourceAppsPickerView(entries: _pickerEntries) { chosen in
+				_isPickerPresenting = false
+				guard !chosen.isEmpty else { return }
+				// Let the picker finish closing before the pipeline starts.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+					_pipeline.downloadSignInstall(chosen, owner: _pipelineViewID)
+				}
 			}
 		}
 		.sheet(item: $_installPresenting, onDismiss: _presentNextInstall) { app in
@@ -204,6 +218,25 @@ struct SourceAppsView: View {
 				sourceURL: route.sourceURL,
 				source: route.source,
 				app: route.app
+			)
+		}
+	}
+	
+	private var _pickerEntries: [SourceAppsPickerView.Entry] {
+		_downloadableApps.map { item in
+			SourceAppsPickerView.Entry(
+				id: item.app.currentUniqueId,
+				name: item.app.name ?? "Unknown",
+				version: item.app.currentVersion,
+				item: BulkPipeline.Item(
+					id: item.app.currentUniqueId,
+					url: item.url,
+					provenance: SourceAppProvenance(
+						sourceURL: item.context.sourceURL,
+						repository: item.context.repository,
+						app: item.app
+					)
+				)
 			)
 		}
 	}
@@ -344,6 +377,88 @@ extension View {
 			self.navigationDestination(item: item, destination: destination)
 		} else {
 			self
+		}
+	}
+}
+
+
+// MARK: - Custom build: pick apps to get, sign & install
+struct SourceAppsPickerView: View {
+	struct Entry: Identifiable {
+		let id: String
+		let name: String
+		let version: String?
+		let item: BulkPipeline.Item
+	}
+	
+	let entries: [Entry]
+	let onConfirm: ([BulkPipeline.Item]) -> Void
+	
+	@Environment(\.dismiss) private var dismiss
+	@State private var _selected: Set<String> = []
+	
+	private var _allSelected: Bool {
+		!entries.isEmpty && _selected.count == entries.count
+	}
+	
+	var body: some View {
+		NavigationStack {
+			List(entries) { entry in
+				Button {
+					if _selected.contains(entry.id) {
+						_selected.remove(entry.id)
+					} else {
+						_selected.insert(entry.id)
+					}
+				} label: {
+					HStack(spacing: 12) {
+						Image(systemName: _selected.contains(entry.id) ? "checkmark.circle.fill" : "circle")
+							.font(.title3)
+							.foregroundStyle(_selected.contains(entry.id) ? Color.accentColor : Color.secondary)
+						VStack(alignment: .leading, spacing: 2) {
+							Text(entry.name)
+								.foregroundStyle(.primary)
+							if let version = entry.version {
+								Text(version)
+									.font(.subheadline)
+									.foregroundStyle(.secondary)
+							}
+						}
+						Spacer()
+					}
+					.contentShape(Rectangle())
+				}
+				.buttonStyle(.plain)
+			}
+			.navigationTitle("Choose Apps")
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .topBarLeading) {
+					Button(.localized("Cancel")) {
+						dismiss()
+					}
+				}
+				ToolbarItem(placement: .topBarTrailing) {
+					Button(_allSelected ? "Deselect All" : "Select All") {
+						_selected = _allSelected ? [] : Set(entries.map { $0.id })
+					}
+				}
+			}
+			.safeAreaInset(edge: .bottom) {
+				Button {
+					let chosen = entries.filter { _selected.contains($0.id) }.map { $0.item }
+					onConfirm(chosen)
+				} label: {
+					Text("Get, Sign & Install (\(_selected.count))")
+						.font(.headline)
+						.frame(maxWidth: .infinity)
+						.padding(.vertical, 6)
+				}
+				.buttonStyle(.borderedProminent)
+				.disabled(_selected.isEmpty)
+				.padding()
+				.background(.bar)
+			}
 		}
 	}
 }
