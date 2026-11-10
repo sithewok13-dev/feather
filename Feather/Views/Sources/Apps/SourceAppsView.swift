@@ -80,6 +80,10 @@ struct SourceAppsView: View {
 					onSelect: {self._selectedRoute = $0},
 					onGetSignInstall: { route in
 						_getSignInstall(route)
+					},
+					onRefresh: {
+						await viewModel.refreshSources(object)
+						_load()
 					}
 				)
 				.ignoresSafeArea()

@@ -21,6 +21,34 @@ final class SourcesViewModel: ObservableObject {
 	var isFinished = true
 	@Published var sources: [AltSource: ASRepository] = [:]
 	
+	/// Custom build: re-download just these sources, skipping the local HTTP cache,
+	/// and replace their entries. Used by pull-to-refresh on a source's app list.
+	func refreshSources(_ sources: [AltSource]) async {
+		await withTaskGroup(of: (AltSource, ASRepository?).self) { group in
+			for source in sources {
+				group.addTask {
+					guard let url = source.sourceURL else { return (source, nil) }
+					var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+					request.timeoutInterval = 30
+					guard
+						let (data, _) = try? await URLSession.shared.data(for: request),
+						let repo = try? JSONDecoder().decode(ASRepository.self, from: data)
+					else {
+						return (source, nil)
+					}
+					return (source, repo)
+				}
+			}
+			for await (source, repo) in group {
+				if let repo {
+					await MainActor.run {
+						self.sources[source] = repo
+					}
+				}
+			}
+		}
+	}
+	
 	func fetchSources(_ sources: FetchedResults<AltSource>, refresh: Bool = false, batchSize: Int = 4) async {
 		guard isFinished else { return }
 		
@@ -31,6 +59,11 @@ final class SourcesViewModel: ObservableObject {
 		// isfinished is used to prevent multiple fetches at the same time
 		isFinished = false
 		defer { isFinished = true }
+		
+		// Custom build: a manual refresh must not be served from the HTTP cache.
+		if refresh {
+			URLCache.shared.removeAllCachedResponses()
+		}
 		
 		await MainActor.run {
 			self.sources = [:]
