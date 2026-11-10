@@ -136,13 +136,9 @@ struct InstallPreviewView: View {
 	}
 	
 	private func _install() {
-		guard isSharing || app.identifier != Bundle.main.bundleIdentifier! || _installationMethod == 1 else {
-			UIAlertController.showAlertWithOk(
-				title: .localized("Install"),
-				message: .localized("You cannot update ‘%@‘ with itself, please use an alternative tool to update it.", arguments: Bundle.main.name)
-			)
-			return
-		}
+		// Custom build: self-update is allowed with the Server method too. Once iOS has
+		// downloaded the package and starts installing, Feather closes itself so iOS can
+		// replace it (see startInstallProgressPolling).
 				
 		Task.detached {
 			do {
@@ -218,6 +214,17 @@ struct InstallPreviewView: View {
 
 				if rawProgress > 0 {
 					hasStarted = true
+				}
+				
+				// Custom build: updating Feather itself. Past 0.6 the download is done and
+				// iOS is installing; step out of the way so it can replace this app.
+				if bundleID == Bundle.main.bundleIdentifier, rawProgress >= 0.6 {
+					Logger.misc.info("Self-update: package downloaded, closing Feather so iOS can finish")
+					try? await Task.sleep(nanoseconds: 1_000_000_000)
+					await MainActor.run {
+						UIApplication.shared.suspend()
+					}
+					break
 				}
 
 				let progress = await hasStarted
